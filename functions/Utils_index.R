@@ -147,7 +147,7 @@ fit.distribution <- function(data,distr,method=c('mle','lmom'),na.thres=10){
 }
 
 
-funSDEI <- function(x, method=c("fitdis", "empirical"), scale){
+funSDEI <- function(x, method=c("fitdis", "empirical", "none"), scale){
   #@x is a data frame with the dates and the values
   library(xts)
   if (missing('method')){
@@ -163,30 +163,45 @@ funSDEI <- function(x, method=c("fitdis", "empirical"), scale){
   if (!is.null(scale)){
     
     dat.xts <- xts(x[,2],as.POSIXct(x[,1]))
-    ends <- endpoints(x[,1],'hours',scale)
-    new.x <- period.apply(dat.xts,ends,sum)
-    fdat  <- myfits(data.frame(new.x[,1])[,1], "none")
-    p     <- fdat$pnon
-    SDEI <- qnorm(p,0,1)
-    return(list("SDEI"= data.frame(date=index(new.x), SDEI=SDEI), "infodis"= fdat[[1]]))
-    
-  }else{
-    
-    if (method == "fitdis"){
-      fdat  <- myfits(x[,2], "none")
-      p     <- fdat$pnon
-      SDEI <-qnorm(p,0,1)
-      return(list("SDEI"= data.frame(date=x[,1], SDEI=SDEI), "infodis"= fdat[[1]]))
-      
-    }else if (method == "empirical"){
-      
-      n   <- length(x[,2]);
-      EP  <- ecdf(x[,2])  # Get the empirical probability
-      p  <- EP(x[,2])*n/(n+1)  # Use the Weibull plotting position
-      SDEI <-qnorm(p,0,1)
-      return(list("SDEI"= data.frame(date=x[,1], SDEI=SDEI)))
+    # endpoints(x[,1],'weeks',scale/(7*24)) does not give same output as endpoints(x[,1],'hours',scale)
+    if(scale %% (7*24) == 0){ 
+      ends <- endpoints(x[,1],'weeks',scale/(7*24))
+    }else{
+      ends <- endpoints(x[,1],'hours',scale)
     }
+    
+    new.x <- period.apply(dat.xts,ends,sum)
+    new.x <- data.frame(index(new.x), coredata(new.x))
+    colnames(new.x) <- colnames(x)
+    
+    # remove last entry if it corresponds to an incomplete day or week
+    if(length(unique(diff(ends))) != 1){
+      x <- new.x[-nrow(new.x), ]
+    }else{
+      x <- new.x 
+    }
+    
   }
+  
+  if (method == "fitdis"){
+    fdat  <- myfits(x[,2], "none")
+    p     <- fdat$pnon
+    SDEI <-qnorm(p,0,1)
+    return(list("SDEI"= data.frame(date=x[,1], SDEI=SDEI), "infodis"= fdat[[1]]))
+    
+  }else if (method == "empirical"){
+    
+    n   <- length(x[,2]);
+    EP  <- ecdf(x[,2])  # Get the empirical probability
+    p  <- EP(x[,2])*n/(n+1)  # Use the Weibull plotting position
+    SDEI <- qnorm(p,0,1)
+    return(list("SDEI"= data.frame(date=x[,1], SDEI=SDEI)))
+  }else if (method == "none"){
+    # extract raw data
+    colnames(x) <- c("date", "SDEI")
+    return(list("SDEI"= x))
+  }
+
   
 }
 
@@ -230,37 +245,123 @@ calculate_energyindex_country <- function(data, method="fitdis", scale, nvars){
     names(ener_ind) <- nvars
     
     n_sdei   <- lapply(ener_ind, function(x) x[[1]])
-    info_dis <- lapply(ener_ind, function(x) x[[2]])
-    df_info <- setNames(melt(info_dis, id=c("nam.mar","ks.pval")), c("nam.mar","ks.pval", "type"))
+    if (method == "fitdis"){
+      info_dis <- lapply(ener_ind, function(x) x[[2]])
+      df_info <- setNames(melt(info_dis, id=c("nam.mar","ks.pval")), c("nam.mar","ks.pval", "type"))
+    }else{
+      df_info <- NULL
+    }
+    
     df_sdei <- setNames(melt(n_sdei, id=c("date","SDEI")), c("date","SDEI","type"))
     # pivot_wider(df_sdei, names_from=type, values_from=SDEI)
     l_sdei[[icountry]] <- df_sdei
     l_info[[icountry]] <- df_info
   }
   
-  names(l_sdei) <- names(l_info) <- n_country
   
-  return(list("SDEI"= l_sdei, "info_dis"=l_info))
+  if(method == "fitdis"){
+    names(l_sdei) <- names(l_info) <- n_country
+    return(list("SDEI"= l_sdei, "info_dis"=l_info))
+  }else{
+    names(l_sdei) <- n_country
+    return(list("SDEI"= l_sdei))
+  }
   
 }
 
 
-plot_sdei <- function(dx, yy){
+plot_sdei <- function(dx, yy = seq(1979, 2019), vari = "SDEI"){
   # Visualise the index
   # ggplot(dx, aes(x=date,y=SDEI)) +
   #   geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
   #   geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
   #   geom_hline(aes(yintercept=0), color="grey") + theme_bw()
   
-  p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>%ggplot( aes(x=date,y=SDEI)) +
-    geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
-    geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
-    geom_hline(aes(yintercept=0), color="grey") +
-    geom_hline(aes(yintercept=1), color="grey",linetype="dashed")+
-    geom_hline(aes(yintercept=-1), color="grey",linetype="dashed")+
-    facet_wrap(~type) + 
-    theme_bw()
+  if(length(unique(dx$type)) > 1){
+    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>%ggplot( aes(x=date,y=SDEI)) +
+      geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
+      geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
+      scale_x_datetime(name="Date", expand=c(0,0)) + scale_y_continuous(name=vari, expand=expansion(c(0, 0.1))) +
+      #geom_hline(aes(yintercept=0), color="grey") +
+      #geom_hline(aes(yintercept=1), color="grey",linetype="dashed")+
+      #geom_hline(aes(yintercept=-1), color="grey",linetype="dashed")+
+      facet_wrap(~type) + 
+      theme_bw()
+  }else{
+    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>%ggplot( aes(x=date,y=SDEI)) +
+      geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
+      geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
+      scale_x_datetime(name="Date", expand=c(0,0)) + scale_y_continuous(name=vari, expand=expansion(c(0, 0.1))) +
+      #geom_hline(aes(yintercept=0), color="grey") +
+      #geom_hline(aes(yintercept=1), color="grey",linetype="dashed")+
+      #geom_hline(aes(yintercept=-1), color="grey",linetype="dashed")+
+      theme_bw()
+  }
   return(p)
   
 }
 
+
+plot_sdei_dist <- function(dx, yy = seq(1979, 2019), n_bins = 100, title = ""){
+  # Visualise the distribution of the index
+
+  if(length(unique(dx$type)) > 1){
+    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>% 
+      ggplot() +
+      geom_histogram(aes(x=SDEI), col = "black", bins = n_bins, alpha = 0.4) + 
+      xlab(title) + scale_y_continuous(name = "Density", expand = expansion(c(0, 0.05))) + 
+      facet_wrap(~type) + 
+      theme_bw() +
+      theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
+            axis.text.y=element_blank(), axis.ticks.y=element_blank())
+  }else{
+    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>% 
+      ggplot() +
+      geom_histogram(aes(x=SDEI), col = "black", bins = n_bins, alpha = 0.4) + 
+      xlab(title) + scale_y_continuous(name = "Density", expand = expansion(c(0, 0.05))) + 
+      theme_bw() +
+      theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
+            axis.text.y=element_blank(), axis.ticks.y=element_blank())
+  }
+
+  return(p)
+  
+}
+
+
+get_abbrevs <- function(countries){
+  abbrevs <- sapply(seq_along(countries), function(i) substr(countries[i], 1, 3))
+  
+  if("Slovakia" %in% countries & "Slovenia" %in% countries){
+    abbrevs[countries == "Slovakia"] <- "Sva"; abbrevs[countries == "Slovenia"] <- "Sve"
+  }
+  if("Czech_Republic" %in% countries){
+    abbrevs[countries == "Czech_Republic"] <- "CR"
+  }
+  if("United_Kingdom" %in% countries){
+    abbrevs[countries == "United_Kingdom"] <- "UK"
+  }
+  
+  return(abbrevs)
+}
+
+
+plot_ics <- function(df, names=NULL){
+  # function to plot installed wind and solar capacities in each country
+  
+  if(is.null(names)){
+    names <- df$country
+  }
+  
+  plot_icw <- ggplot(data.frame(n=names, c=df$IC17_wind)) + 
+    geom_bar(aes(x = n, y = c), stat="identity") +
+    scale_y_continuous(name="Installed wind capacity (2017)", expand = expansion(c(0, 0.05))) + 
+    scale_x_discrete(name="") + theme_bw()
+  
+  plot_ics <- ggplot(data.frame(n=names, c=df$IC17_solar)) + 
+    geom_bar(aes(x = n, y = c), stat="identity") +
+    scale_y_continuous(name="Installed solar capacity (2017)", expand = expansion(c(0, 0.05))) + 
+    scale_x_discrete(name="") + theme_bw()
+  
+  gridExtra::grid.arrange(plot_icw, plot_ics)
+}
