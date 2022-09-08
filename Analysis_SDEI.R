@@ -21,7 +21,8 @@ n_year <- length(unique(lubridate::year(enerH_upIC$date)))
 
 ## country abbreviations for plotting
 abbrevs <- get_abbrevs(unique(enerH_upIC$country))
-
+## Also add ISO names for map-plottings
+s_names <- unlist(lapply(unique(enerH_upIC$country), get_shortcountry_names))
 
 ## installed capacities
 installed_capacities <- enerH_upIC[!duplicated(enerH_upIC$country), c("country", "IC17_wind", "IC17_solar")]
@@ -74,6 +75,8 @@ plot_2w <- plot_sdei(sdei_reduced, year_vec, vari = ylabb)
 
 dev.new(width=4, height=5, noRStudioGD = TRUE)
 gridExtra::grid.arrange(plot_1h, plot_1d, plot_1w, plot_2w, ncol = 1)
+#
+#ggarrange(plotlist = list(plot_1h, plot_1d, plot_1w, plot_2w), ncol=2, nrow = 2)
 # overlap in plots
 
 
@@ -95,7 +98,9 @@ plot_2w <- plot_sdei(sdei_reduced, year_vec, vari = ylabb)
 
 dev.new(width=7, height=5, noRStudioGD = TRUE)
 gridExtra::grid.arrange(plot_1h, plot_1d, plot_1w, plot_2w, ncol = 1)
- # overlap in plots
+# multiplot
+#ggarrange(plotlist = list(plot_1h, plot_1d, plot_1w, plot_2w), ncol=2, nrow = 2)
+# overlap in plots
 
 
 
@@ -226,6 +231,15 @@ ggplot(df) + geom_bar(aes(x = n, y = c, fill = seas), stat="identity") +
   theme(legend.justification=c(1, 1), legend.position=c(0.99, 0.99), legend.title=element_blank()) +
   ggtitle(title_name)
 
+################
+# Plot in maps
+###############
+# prepare the input data 
+input_data <- data.frame(area=s_names, value=c(unlist(num_ev)*season_ev, unlist(num_ev)*(1-season_ev)), 
+                         seas=rep(c("W", "S"), each=length(s_names)))
+
+# plot single plot
+plot_index_UEmap(input_data, fvar = 'seas')
 
 ## plot average and maximum drought magnitude in each country
 
@@ -241,6 +255,10 @@ plot_max <- ggplot(data.frame(c=sapply(mag_ev, function(x) x['Max.']), n=abbrevs
 
 gridExtra::grid.arrange(plot_av, plot_max)
 
+# similar but in maps
+dfM_mean           <- data.frame(value=sapply(mag_ev, function(x) x['Mean']), area=s_names)
+rownames(dfM_mean) <- NULL
+plot_index_UEmap(dfM_mean)
 
 ## plot average and maximum drought duration in each country
 
