@@ -8,7 +8,7 @@ ConfigureEnv();
 
 ## load data
 load("data/enerH_upIC.Rda")
-enerH_upIC <- enerH_upIC%>%dplyr::filter(country!="Montenegro") # Remove Montenegro (there was no IC avaible)
+enerH_upIC <- enerH_upIC %>% dplyr::filter(country!="Montenegro") # Remove Montenegro (there was no IC available)
 
 
 abbrevs <- get_abbrevs(unique(enerH_upIC$country)) # country abbreviations for plotting
