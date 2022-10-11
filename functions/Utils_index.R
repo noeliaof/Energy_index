@@ -1,335 +1,6 @@
-fit.distribution <- function(data,distr,method=c('mle','lmom'),na.thres=10){  
-  # function from https://github.com/WillemMaetens/standaRdized
-  # I am not using it for now
-  distr <- match.arg(arg=distr,choices=c('gamma','gamma3','weibull','weibull3','gev','glogis'))
-  
-  if (distr %in% c('gamma3','weibull3') & missing('method')){
-    method <- 'lmom'
-  } else {
-    method <- match.arg(method)
-  }
-  
-  # parameter definitions
-  if(distr=='gamma'){
-    params <- c(shape=as.numeric(NA),rate=as.numeric(NA))
-  } else if (distr=='gamma3'){
-    params <- c(shape=as.numeric(NA),scale=as.numeric(NA),thres=as.numeric(NA))
-  } else if (distr=='weibull'){
-    params <- c(shape=as.numeric(NA),scale=as.numeric(NA))
-  } else if (distr=='weibull3') {
-    params <- c(shape=as.numeric(NA),scale=as.numeric(NA),thres=as.numeric(NA))    
-  } else if (distr=='gev'){
-    params <- c(shape=as.numeric(NA),scale=as.numeric(NA),location=as.numeric(NA))
-  } else if (distr=='glogis'){
-    if (method=='mle'){
-      params <- c(shape=as.numeric(NA),scale=as.numeric(NA),location=as.numeric(NA))
-    } else {
-      distr <- 'glo' # change name to conform with lmomco package definition
-      params <- c(xi=as.numeric(NA),alpha=as.numeric(NA),kappa=as.numeric(NA))
-    }
-  }
-  
-  # initialize data properties and goodness-of-fit statistics vectors
-  fit.props <- c(prob.zero=as.numeric(NA),
-                 n.obs=as.integer(NA),
-                 n.na=as.numeric(NA),
-                 pct.na=as.numeric(NA),
-                 ks.pval=as.numeric(NA),
-                 ad.pval=as.numeric(NA))
-  
-  # determine n.obs
-  fit.props['n.obs'] <- as.integer(length(data))
-  # check data for NA values and omit if necessary
-  if(length(data)!=0){
-    fit.props['n.na'] <- length(data[which(is.na(data))])
-    fit.props['pct.na'] <- (fit.props['n.na']/fit.props['n.obs'])*100
-    data <- data[!is.na(data)]
-  }
-  # determine prob.zero
-  fit.props['prob.zero'] <- length(which(data==0))/length(data)
-  
-  # check na.thres
-  if(fit.props['pct.na'] >= na.thres | length(data)==0){
-    # NA output
-    res <- c(params,fit.props)
-    attributes(res) <- c(attributes(res),list(data=data,distr=distr,method=method,na.thres=na.thres))
-    return(res)
-  }
-  
-  # check data for zeros or negative values in case of gamma or weibull distribution
-  if (distr == 'gamma' | distr=='weibull'){ 
-    if(any(data<0)){
-      warning(paste(distr,'distribution: all data values must be zero or positive, distribution not fitted'))
-      return(c(params,fit.props)) # NA output
-    }
-    data <- data[which(data!=0)]
-  }
-  
-  # fit distribution to data
-  
-  # maximum likelihood estimation parameter fit
-  if (method=='mle'){
-    # provide start estimates for the distribution fitting
-    if(distr=='gamma3' | distr=='weibull3'){
-      stop(paste('method mle not supported for ',distr,', use method lmom',sep=''))
-    } else if (distr=='gev' | distr=='glogis'){
-      start <- list(shape=1,scale=1,location=0)
-    } else {
-      start <- NULL
-    }
-    # fit distribution
-    fit <- try(fitdistrplus::fitdist(data=data,distr=distr,method='mle',start=start))
-    if(!inherits(fit,'try-error')){
-      params <- fit$estimate
-    } else {
-      warning('distribution fitting failed')
-      return(c(params,fit.props)) # NA output
-    }
-  }
-  
-  # L-moments parameter fit
-  if (method=='lmom'){
-    pwm <- lmomco::pwm.ub(data)
-    lmom <- lmomco::pwm2lmom(pwm)
-    if (!lmomco::are.lmom.valid(lmom) | is.na(sum(lmom[[1]])) | is.nan(sum(lmom[[1]]))) {
-      warning('invalid moments, no distribution fitted')
-      return(c(params,fit.props)) # NA output
-    }
-    # remap parameters
-    if(distr=='gamma'){
-      fit <- lmomco::pargam(lmom)
-      params['shape'] <- fit$para['alpha']
-      params['rate'] <- 1/fit$para['beta']
-    } else if (distr=='gamma3') {
-      fit <- lmomco::parpe3(lmom)
-      params['shape'] <- (2/fit$para['gamma'])^2
-      params['scale'] <- fit$para['sigma']/sqrt(params['shape'])
-      params['thres'] <- fit$para['mu'] - (params['shape']*params['scale'])
-    } else if (distr=='weibull'){
-      # this is the 3 parameter weibull distribution, any threshold should be accounted for by the prob.zero value
-      fit <- lmomco::parwei(lmom)
-      params['shape'] <- fit$para['delta']
-      params['scale'] <- fit$para['beta']
-    } else  if (distr=='weibull3'){
-      fit <- lmomco::parwei(lmom)
-      params['shape'] <- fit$para['delta']
-      params['scale'] <- fit$para['beta']
-      params['thres'] <- -1*fit$para['zeta']
-    } else if (distr=='gev'){
-      fit <- lmomco::pargev(lmom)
-      params['shape'] <- -1*fit$para['kappa']
-      params['scale'] <- fit$para['alpha']
-      params['location'] <- fit$para['xi']
-    } else if (distr=='glo'){
-      fit <- lmomco::parglo(lmom)
-      params['xi'] <- fit$para['xi']
-      params['alpha'] <- fit$para['alpha']
-      params['kappa'] <- fit$para['kappa']
-    }
-  }
-  
-  # calculate goodness-of-fit
-  if(!any(is.na(params))){
-    suppressWarnings(ks.pval <- try(do.call('ks.test',c(list(x=data,y=paste0('p',distr)),as.list(params)))$p.value))
-    if(!inherits(ks.pval,'try-error')){
-      fit.props['ks.pval'] <- ks.pval
-    }
-    suppressWarnings(ad.pval <- try(do.call('ad.test',c(list(x=data,null=paste0('p',distr,sep='')),as.list(params)))$p.value))
-    if(!inherits(ad.pval,'try-error')){
-      fit.props['ad.pval'] <- ad.pval
-    }
-  }
-  
-  # return value
-  res <- c(params,fit.props)
-  attributes(res) <- c(attributes(res),list(data=data,distr=distr,method=method,na.thres=na.thres))
-  return(res)
-}
-
-
-funSDEI <- function(x, method=c("fitdis", "empirical", "none"), scale){
-  #@x is a data frame with the dates and the values
-  library(xts)
-  if (missing('method')){
-    method <- 'fitdis'
-  } else {
-    method <- match.arg(method)
-  }
-  
-  if (missing('scale')){
-    scale <- NULL
-  }
-  
-  if (!is.null(scale)){
-    
-    dat.xts <- xts(x[,2],as.POSIXct(x[,1]))
-    # endpoints(x[,1],'weeks',scale/(7*24)) does not give same output as endpoints(x[,1],'hours',scale)
-    if(scale %% (7*24) == 0){ 
-      ends <- endpoints(x[,1],'weeks',scale/(7*24))
-    }else{
-      ends <- endpoints(x[,1],'hours',scale)
-    }
-    
-    new.x <- period.apply(dat.xts,ends,sum)
-    new.x <- data.frame(index(new.x), coredata(new.x))
-    colnames(new.x) <- colnames(x)
-    
-    # remove last entry if it corresponds to an incomplete day or week
-    if(length(unique(diff(ends))) != 1){
-      x <- new.x[-nrow(new.x), ]
-    }else{
-      x <- new.x 
-    }
-    
-  }
-  
-  if (method == "fitdis"){
-    fdat  <- myfits(x[,2], "none")
-    p     <- fdat$pnon
-    SDEI <-qnorm(p,0,1)
-    return(list("SDEI"= data.frame(date=x[,1], SDEI=SDEI), "infodis"= fdat[[1]]))
-    
-  }else if (method == "empirical"){
-    
-    n   <- length(x[,2]);
-    EP  <- ecdf(x[,2])  # Get the empirical probability
-    p  <- EP(x[,2])*n/(n+1)  # Use the Weibull plotting position
-    SDEI <- qnorm(p,0,1)
-    return(list("SDEI"= data.frame(date=x[,1], SDEI=SDEI)))
-  }else if (method == "none"){
-    # extract raw data
-    colnames(x) <- c("date", "SDEI")
-    return(list("SDEI"= x))
-  }
-
-  
-}
-
-
-SDEI_Events <- function(values, type) {
-  values <- as.numeric(values)
-  sti.extremely.hot   <- sum(values >= 2.00, na.rm=T)
-  sti.very.hot        <- sum(values < 2.00 & values >= 1.50, na.rm=T)
-  sti.moderately.hot  <- sum(values < 1.50 & values >= 1.00, na.rm=T)
-  sti.near.normal     <- sum(values < 1.00 & values > -1.00, na.rm=T)
-  sti.moderately.cold <- sum(values <= -1.00 & values > -1.50, na.rm=T)
-  sti.very.cold       <- sum(values <= -1.50 & values > -2.00, na.rm=T)
-  sti.extremely.cold  <- sum(values <= -2.00, na.rm=T)
-  r <- c(sti.extremely.hot, sti.very.hot, sti.moderately.hot, sti.near.normal, sti.moderately.cold, sti.very.cold, sti.extremely.cold)
-  names(r) = c("Extremely hot","Very hot","Moderately hot","Near normal","Moderately cold","Very cold","Extremely cold") 
-  if (sti.near.normal == 0) {
-    return (NA)
-  } else {
-    return (r)
-  }
-}
-
-calculate_energyindex_country <- function(data, method="fitdis", scale, nvars){
-  
-  n_country <- unique(data$country)
-  ener_ind <- l_sdei <- l_info <-  list()
-  for ( icountry in 1:length(n_country)){
-    for( ivar in 1:length(nvars)){
-      X <- data%>%dplyr::filter(country==n_country[icountry])%>%dplyr::select(date,nvars[ivar])
-      # ener_ind[[ivar]] <- funSDEI(X, method, scale = scale)
-      country_index <- tryCatch({ funSDEI(X, method, scale = scale)}, 
-                                   error=function(e) {cat("\n","error to get the index in", n_country[icountry], "for",nvars[ivar])})
-      if (is.null(country_index)){
-        ener_ind[[ivar]]<- NA
-      }else{
-        ener_ind[[ivar]] <- country_index
-        # plot_sdei(country_index$SDEI)
-      }
-      
-    }
-    names(ener_ind) <- nvars
-    
-    n_sdei   <- lapply(ener_ind, function(x) x[[1]])
-    if (method == "fitdis"){
-      info_dis <- lapply(ener_ind, function(x) x[[2]])
-      df_info <- setNames(melt(info_dis, id=c("nam.mar","ks.pval")), c("nam.mar","ks.pval", "type"))
-    }else{
-      df_info <- NULL
-    }
-    
-    df_sdei <- setNames(melt(n_sdei, id=c("date","SDEI")), c("date","SDEI","type"))
-    # pivot_wider(df_sdei, names_from=type, values_from=SDEI)
-    l_sdei[[icountry]] <- df_sdei
-    l_info[[icountry]] <- df_info
-  }
-  
-  
-  if(method == "fitdis"){
-    names(l_sdei) <- names(l_info) <- n_country
-    return(list("SDEI"= l_sdei, "info_dis"=l_info))
-  }else{
-    names(l_sdei) <- n_country
-    return(list("SDEI"= l_sdei))
-  }
-  
-}
-
-
-plot_sdei <- function(dx, yy = seq(1979, 2019), vari = "SDEI"){
-  # Visualise the index
-  # ggplot(dx, aes(x=date,y=SDEI)) +
-  #   geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
-  #   geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
-  #   geom_hline(aes(yintercept=0), color="grey") + theme_bw()
-  
-  if(length(unique(dx$type)) > 1){
-    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>%ggplot( aes(x=date,y=SDEI)) +
-      geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
-      geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
-      scale_x_datetime(name="Date", expand=c(0,0)) + scale_y_continuous(name=vari, expand=expansion(c(0, 0.1))) +
-      #geom_hline(aes(yintercept=0), color="grey") +
-      #geom_hline(aes(yintercept=1), color="grey",linetype="dashed")+
-      #geom_hline(aes(yintercept=-1), color="grey",linetype="dashed")+
-      facet_wrap(~type) + 
-      theme_bw()
-  }else{
-    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>%ggplot( aes(x=date,y=SDEI)) +
-      geom_ribbon(aes(ymin=pmin(SDEI,0), ymax=0), fill="blue", alpha=0.5) +
-      geom_ribbon(aes(ymin=0, ymax=pmax(SDEI,0)), fill="red", alpha=0.5) +
-      scale_x_datetime(name="Date", expand=c(0,0)) + scale_y_continuous(name=vari, expand=expansion(c(0, 0.1))) +
-      #geom_hline(aes(yintercept=0), color="grey") +
-      #geom_hline(aes(yintercept=1), color="grey",linetype="dashed")+
-      #geom_hline(aes(yintercept=-1), color="grey",linetype="dashed")+
-      theme_bw()
-  }
-  return(p)
-  
-}
-
-
-plot_sdei_dist <- function(dx, yy = seq(1979, 2019), n_bins = 100, title = ""){
-  # Visualise the distribution of the index
-
-  if(length(unique(dx$type)) > 1){
-    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>% 
-      ggplot() +
-      geom_histogram(aes(x=SDEI), col = "black", bins = n_bins, alpha = 0.4) + 
-      xlab(title) + scale_y_continuous(name = "Density", expand = expansion(c(0, 0.05))) + 
-      facet_wrap(~type) + 
-      theme_bw() +
-      theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
-            axis.text.y=element_blank(), axis.ticks.y=element_blank())
-  }else{
-    p <- dx%>%dplyr::filter(format(date,"%Y")%in%yy)%>% 
-      ggplot() +
-      geom_histogram(aes(x=SDEI), col = "black", bins = n_bins, alpha = 0.4) + 
-      xlab(title) + scale_y_continuous(name = "Density", expand = expansion(c(0, 0.05))) + 
-      theme_bw() +
-      theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
-            axis.text.y=element_blank(), axis.ticks.y=element_blank())
-  }
-
-  return(p)
-  
-}
-
-
 get_abbrevs <- function(countries){
+  # function to get abbreviations from a list of country strings
+  
   abbrevs <- sapply(seq_along(countries), function(i) substr(countries[i], 1, 3))
   
   if("Slovakia" %in% countries & "Slovenia" %in% countries){
@@ -345,64 +16,376 @@ get_abbrevs <- function(countries){
   return(abbrevs)
 }
 
-get_shortcountry_names <- function(longname){
+
+scale_data <- function(x, scale){
+  # function to aggregate the data across a given timescale
   
-  if (longname == "Austria") shortname <- "AT"
-  if (longname == "Albania") shortname <- "AL"
-  if (longname == "Belgium") shortname <- "BE"
-  if (longname == "Bulgaria") shortname <- "BG"
-  if (longname == "Switzerland") shortname <- "CH"
-  if (longname == "Cyprus") shortname <- "CY"
-  if (longname == "Czech_Republic") shortname <- "CZ"
-  if (longname == "Germany") shortname <- "DE"
-  if (longname == "Denmark") shortname <- "DK"
-  if (longname == "Estonia") shortname <- "EE"
-  if (longname == "Greece") shortname <- "EL"
-  if (longname == "Spain") shortname <- "ES"
-  if (longname == "Finland") shortname <- "FI"
-  if (longname == "France") shortname <- "FR"
-  if (longname == "Croatia") shortname <- "HR"
-  if (longname == "Hungary") shortname <- "HU"
-  if (longname == "Ireland") shortname <- "IE"
-  if (longname == "Iceland") shortname <- "IS"
-  if (longname == "Italy") shortname <- "IT"
-  if (longname == "Liechtenstein") shortname <- "LI"
-  if (longname == "Latvia") shortname <- "LV"
-  if (longname == "Lithuania") shortname <- "LT"
-  if (longname == "Luxembourg") shortname <- "LU"
-  if (longname == "Montenegro") shortname <- "ME"
-  if (longname == "Macedonia") shortname <- "MK"
-  if (longname == "Malta") shortname <- "MT"
-  if (longname == "Netherlands") shortname <- "NL"
-  if (longname == "Norway") shortname <- "NO"
-  if (longname == "Poland") shortname <- "PL"
-  if (longname == "Portugal") shortname <- "PT"
-  if (longname == "Romania") shortname <- "RO"
-  if (longname == "Serbia") shortname <- "RS"
-  if (longname == "Slovenia") shortname <- "SI"
-  if (longname == "Sweden") shortname <- "SE"
-  if (longname == "Slovakia") shortname <- "SK"
-  if (longname == "Turkey") shortname <- "TR"
-  if (longname == "United_Kingdom") shortname <- "UK"
-  
-  return(shortname)
-}
-plot_ics <- function(df, names=NULL){
-  # function to plot installed wind and solar capacities in each country
-  
-  if(is.null(names)){
-    names <- df$country
+  dat.xts <- xts(x[,2], as.POSIXct(x[,1]))
+  if(scale %% (7*24) == 0){ 
+    ends <- endpoints(x[,1], 'weeks', scale/(7*24))
+  }else{
+    ends <- endpoints(x[,1], 'hours', scale)
   }
   
-  plot_icw <- ggplot(data.frame(n=names, c=df$IC17_wind)) + 
-    geom_bar(aes(x = n, y = c), stat="identity") +
-    scale_y_continuous(name="Installed wind capacity (2017)", expand = expansion(c(0, 0.05))) + 
-    scale_x_discrete(name="") + theme_bw()
+  new.x <- period.apply(dat.xts, ends, sum)
+  new.x <- data.frame(index(new.x), coredata(new.x))
+  colnames(new.x) <- colnames(x)
   
-  plot_ics <- ggplot(data.frame(n=names, c=df$IC17_solar)) + 
-    geom_bar(aes(x = n, y = c), stat="identity") +
-    scale_y_continuous(name="Installed solar capacity (2017)", expand = expansion(c(0, 0.05))) + 
-    scale_x_discrete(name="") + theme_bw()
+  # remove last entry if it corresponds to an incomplete day or week
+  if(length(unique(diff(ends))) != 1){
+    return(new.x[-nrow(new.x), ])
+  }else{
+    return(new.x) 
+  }
+}
+
+
+myfits <- function(xx, mtype, th, ...){
   
-  gridExtra::grid.arrange(plot_icw, plot_ics)
+  require(fitdistrplus)
+  
+  
+  if (mtype%in%c("gev","pareto")){
+    if (mtype=="gev"){
+      ff <- gev.fit(xx)
+      params <- ff$mle
+    }else if(mtype=="pareto"){
+      thx <- quantile(xx, probs=th)
+      ff <- gpd.fit(xx, thx[[1]])
+      params <- c(ff$threshold, ff$mle)
+    }
+    nam.mar <- mtype
+    estimates <- params  
+    gf <- gofTest(xx, distribution = mtype, test = "ks")
+    
+    
+  }else{
+    
+    if (mtype!="none"){
+      distributions <- mtype
+    }else{
+      distributions <-  c("norm", "lnorm", "gamma", "weibull", "exp")
+    }
+    
+    
+    
+    distr_aic <-  list()
+    distr_fit <-  list()
+    ks.lis    <- list()
+    gf.list <- list()
+    
+    
+    for (distribution in distributions) {
+      
+      distr_fit[[distribution]] <-  tryCatch({fitdist(data=xx, distribution)}, error=function(e) {cat(distribution)}) 
+      
+      if ( !is.null(distr_fit[[distribution]] )){
+        distr_aic[[distribution]] <-  distr_fit[[distribution]]$aic
+        pdis <- paste("p",distribution, sep="")
+        gf.list[[distribution]] <- gofstat(distr_fit[[distribution]])
+        if (distribution == "norm"){
+          ks.lis[[distribution]] <- ks.test(xx, pdis, mean= distr_fit[[distribution]]$estimate["mean"],
+                                            sd = distr_fit[[distribution]]$estimate["sd"])
+        }else if (distribution == "lnorm"){
+          ks.lis[[distribution]] <- ks.test(xx, pdis, mean= distr_fit[[distribution]]$estimate["meanlog"],
+                                            sd = distr_fit[[distribution]]$estimate["sdlog"])
+        }else if (distribution == "gamma"){
+          ks.lis[[distribution]] <- ks.test(xx, pdis, shape= distr_fit[[distribution]]$estimate["shape"],
+                                            rate = distr_fit[[distribution]]$estimate["rate"])
+        }else if (distribution == "weibull"){
+          ks.lis[[distribution]] <- ks.test(xx, pdis, shape= distr_fit[[distribution]]$estimate["shape"],
+                                            scale = distr_fit[[distribution]]$estimate["scale"])
+        }else if (distribution == "exp"){
+          ks.lis[[distribution]] <- ks.test(xx, pdis, rate= distr_fit[[distribution]]$estimate["rate"])
+        }
+      }
+    }
+    
+    # ind.min <- which.min(distr_aic)
+    # nam.mar <- names(distr_aic[ind.min])
+    # ks.pval <- ks.lis[[ind.min]]$p.value
+    # 
+    df.bic <- setNames(melt(lapply(gf.list, function(x) x$bic)), c("value", "name"))
+    df.aic <- setNames(melt(lapply(gf.list, function(x) x$aic)), c("value", "name"))
+    df.kspval <- setNames(melt(lapply(gf.list, function(x) x$ks)), c("value", "name"))
+    df.cvpval <- setNames(melt(lapply(gf.list, function(x) x$cvm)), c("value", "name"))
+    # select based on the minimum aic and compatible with pval >0.05
+    ind <- which.min(df.aic$value)
+    if (df.kspval$value[ind]>0.05 | length(df.kspval$value)==1){
+      # I will keep ind, otherwise I look for the next lower aic
+      nam.mar <- names(distr_aic[ind])
+      ks.pval <- df.kspval$value[ind]
+      estimates <- distr_fit[[ind]]$estimate
+      
+    }else{
+      # find another index
+      new_ind <- order(df.aic$value)[-1] #excluding the first
+      ind.ks <-  which(df.kspval$value[new_ind] >0.05)
+      
+      if ( length(ind.ks)>1 ){
+        # take the largest pvalue
+        ind.ks    <- order(df.kspval$value[new_ind], decreasing = T)[1] 
+        ks.pval   <- df.kspval$value[ind.ks]
+        estimates <- distr_fit[[ind.ks]]$estimate
+        nam.mar   <- names(distr_aic[ind.ks])
+        
+      }else{
+        
+        new.ind.ks    <- order(df.kspval$value[new_ind], decreasing = T)[1] 
+        ks.pval   <- df.kspval$value[new.ind.ks]
+        estimates <- distr_fit[[new.ind.ks]]$estimate
+        nam.mar   <- names(distr_aic[new.ind.ks])
+        
+      }
+    }
+    # cdfcomp(distr_fit)
+    
+  }
+  mm <- eval(parse(text=(paste("p",nam.mar, sep=""))))
+  if (length(estimates)>2){
+    p_non <- mm(xx, estimates[1],estimates[2], estimates[3])
+  }else{
+    p_non <- mm(xx, estimates[1],estimates[2])
+  }
+  
+  if (mtype%in%c("gev","pareto")){
+    
+    return(list(data.frame(nam.mar=mtype, pval=gf$p.value), "estimates"=params, "pnon"=p_non))
+  }else{
+    return(list(data.frame(nam.mar,ks.pval), "estimates"=estimates, "pnon"=p_non))
+    
+  }
+  
+}
+
+
+fun_SDEI <- function(x, method = c("fitdis", "empirical", "none"), scale){
+  # function to convert the raw data to standardised indices
+  #@x is a data frame containing dates and the corresponding raw values
+  
+  library(xts)
+  if(missing('method')){
+    method <- 'fitdis'
+  }else{
+    method <- match.arg(method)
+  }
+  
+  if(missing(scale)){
+    scale <- NULL
+  }
+
+  if(!is.null(scale)){
+    x <- scale_data(x, scale)
+  }
+  
+  if(method == "fitdis"){
+    
+    fdat <- myfits(x[,2], "none")
+    p <- fdat$pnon
+    SDEI <- qnorm(p, 0, 1)
+    return(list("SDEI" = data.frame(date = x[,1], SDEI = SDEI), "infodis" = fdat[[1]]))
+    
+  }else if(method == "empirical"){
+    
+    n <- length(x[,2]);
+    EP <- ecdf(x[,2])  # Get the empirical probability
+    p <- (1 + EP(x[,2])*n)/(n + 2)  # Use the Weibull plotting position to ensure values not equal to 0 or 1
+    SDEI <- qnorm(p, 0, 1)
+    return(list("SDEI" = data.frame(date = x[,1], SDEI = SDEI)))
+    
+  }else if (method == "none"){
+    
+    colnames(x) <- c("date", "SDEI")
+    return(list("SDEI" = x))
+    
+  }
+  
+}
+
+
+calculate_energy_index <- function(data, nvars, method = "fitdis", scale = NULL){
+  # wrapper to convert the raw data to standardised indices for all countries and variables
+  
+  n_country <- unique(data$country)
+  
+  ener_ind <- l_sdei <- l_info <- list()
+  for(icountry in 1:length(n_country)){
+    for(ivar in 1:length(nvars)){
+      X <- data %>% dplyr::filter(country==n_country[icountry]) %>% dplyr::select(date,nvars[ivar])
+      country_index <- tryCatch({fun_SDEI(X, method, scale = scale)}, 
+                                error = function(e) {cat("\n","error to get the index in", n_country[icountry], "for", nvars[ivar])})
+      if(is.null(country_index)){
+        ener_ind[[ivar]] <- NA
+      }else{
+        ener_ind[[ivar]] <- country_index
+      }
+    }
+    
+    names(ener_ind) <- nvars
+    
+    n_sdei <- lapply(ener_ind, function(x) x[[1]])
+    if(method == "fitdis"){
+      info_dis <- lapply(ener_ind, function(x) x[[2]])
+      df_info <- setNames(melt(info_dis, id = c("nam.mar", "ks.pval")), c("nam.mar", "ks.pval", "type"))
+    }else{
+      df_info <- NULL
+    }
+    
+    df_sdei <- setNames(melt(n_sdei, id=c("date","SDEI")), c("date","SDEI","type"))
+    l_sdei[[icountry]] <- df_sdei
+    l_info[[icountry]] <- df_info
+  }
+  
+  
+  if(method == "fitdis"){
+    names(l_sdei) <- names(l_info) <- n_country
+    return(list("SDEI" = l_sdei, "info_dis" = l_info))
+  }else{
+    names(l_sdei) <- n_country
+    return(list("SDEI" = l_sdei))
+  }
+  
+}
+
+
+def_energy_drought <- function(dd, mvar, threshval, higher = T, lag = T){
+  # function to get a data frame of energy drought characteristics from index values
+  
+  # the drought characteristics include:
+  # occurrence ('occ' = 0, 1)
+  # intensity ('ins' = 0, 1, 2, 3, i.e. mild, moderate, severe, extreme)
+  # magnitude ('mag')
+  # duration ('dur')
+  
+  # occurrence and intensity
+  if(higher){
+    if(length(threshval) == 1){
+      dd$ins <- as.numeric(dd[[mvar]] >= threshval)
+    }else{
+      dd$ins <- sapply(1:nrow(dd), function(i){sum(dd[[mvar]][i] >= threshval)})
+    }
+  }else{
+    if(length(threshval) == 1){
+      dd$ins <- as.numeric(dd[[mvar]] <= threshval)
+    }else{
+      dd$ins <- sapply(1:nrow(dd), function(i){sum(dd[[mvar]][i] <= threshval)})
+    }
+  }
+  
+  dd$occ <- as.numeric(dd$ins >= 1)
+  
+  if(lag){
+    for(i in 2:nrow(dd)){
+      if(dd$occ[i] == 0 & dd$occ[i-1] == 1 & sign(dd[[mvar]][i]) == sign(dd[[mvar]][i-1])){
+        dd$occ[i] <- 1
+      } 
+    }
+  }
+  
+  # duration and magnitude
+  mag <- abs(dd[[mvar]])*(dd$occ == 1)
+  dd['dur'] <- c(dd$occ[1], numeric(nrow(dd) - 1))
+  dd['mag'] <- c(mag[1], numeric(nrow(dd) - 1))
+  for(i in 2:nrow(dd)){
+    if(dd$occ[i]){
+      dd$dur[i] <- dd$dur[i-1] + 1
+      dd$dur[i-1] <- 0
+      
+      dd$mag[i] <- dd$mag[i-1] + mag[i]
+      dd$mag[i-1] <- 0
+    }
+  }
+  
+  dd <- dd[,c("date", mvar, "ins", "occ", "dur", "mag")]
+  
+  return(dd)
+}
+
+
+parametric_analysis <- function(var_vec, time_vec, country_vec, dist_vec, index_list_all){
+  # function to fit several distributions to a time series and compare them based on their AIC
+  
+  require(fitdistrplus)
+  require(flexsurv)
+  
+  # define truncated normal distribution
+  dtnorm <- function(x, mean, sd) dnorm(x, mean, sd)/(1 - pnorm(0, mean, sd))
+  ptnorm <- function(q, mean, sd) (pnorm(q, mean, sd) - pnorm(0, mean, sd))/(1 - pnorm(0, mean, sd))
+  
+  # define truncated logistic distribution
+  dtlogis <- function(x, location, scale) dlogis(x, location, scale)/(1 - plogis(0, location, scale))
+  ptlogis <- function(q, location, scale) (plogis(q, location, scale) - plogis(0, location, scale))/(1 - plogis(0, location, scale))
+  
+  
+  
+  aic_df <- data.frame(time = rep(time_vec, each = length(country_vec)*length(dist_vec)*length(var_vec)),
+                       variable = rep(rep(var_vec, each = length(dist_vec)*length(country_vec)), length(time_vec)),
+                       country = rep(rep(country_vec, each = length(dist_vec)), length(time_vec)*length(var_vec)),
+                       dist = rep(dist_vec, length(country_vec)*length(var_vec)*length(time_vec)),
+                       aic = NA,
+                       sig = NA)
+  
+  for(time in time_vec){
+
+    # select relevant data frame
+    index_list <- index_list_all[[time]]
+    
+    for(vari in var_vec){    
+      for(country in country_vec){
+        for(dist in dist_list){
+          
+          print(c(time, vari, country, dist))
+          
+          # specify start parameters for unknown distributions
+          if(dist == "tnorm"){
+            start_list = list(mean = 0, sd = 1)
+          }else if(dist == "tlogis"){
+            start_list = list(location = 0, scale = 1)
+          }else{
+            start_list = NULL
+          }
+          
+          # log-normal and log-logistic distributions have strictly positive support
+          if(dist %in% c("lnorm", "llogis")){
+            index_vec[index_vec == 0] <- runif(1, 0, 0.0001) 
+          }
+          
+          ind <- aic_df$time == time & aic_df$variable == vari & aic_df$country == country & aic_df$dist == dist
+          index_vec <- index_list[[country]] %>% dplyr::filter(type == vari) %>% dplyr::pull(SDEI)
+          model <- tryCatch(fitdist(index_vec, dist, start = start_list), error=function(e) NULL)
+          
+          if(is.null(model)){
+            aic_df$aic[ind] <- NA
+            aic_df$sig[ind] <- NA
+          }else{
+            pars <- lapply(split(model$estimate, names(model$estimate)), unname)
+            aic_df$aic[ind] <- model$aic
+            aic_df$sig[ind] <- do.call(ks.test, append(list(x = index_vec, y = paste("p", dist, sep = "")), pars))$p.value
+          }
+          
+        }
+      }
+    }
+  }
+  
+  # extract distribution with the lowest aic
+  aic_df_best <- data.frame(time = rep(time_vec, each = length(country_vec)*length(var_vec)),
+                            variable = rep(rep(var_vec, each = length(country_vec)), length(time_vec)),
+                            country = rep(country_vec, length(var_vec)*length(time_vec)),
+                            dist = NA,
+                            aic = NA,
+                            sig = NA)
+  for(time in time_vec){  
+    for(vari in var_vec){
+      for(country in country_vec){
+        ind <- aic_df$time == time & aic_df$variable == vari & aic_df$country == country
+        df_red <- aic_df[ind, ]
+        ind <- aic_df_best$time == time & aic_df_best$variable == vari & aic_df_best$country == country
+        aic_df_best[ind, ] <- df_red %>% dplyr::filter(aic == min(aic, na.rm=T))
+      }
+    }
+  }
+  
+  return(aic_df_best)
+  
 }
