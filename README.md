@@ -9,7 +9,7 @@ This repository contains code and data that can be used to reproduce the results
 
 ## Standardised Energy Indices
 
-This paper introduces standardised energy indices that can be used to monitor energy demand, production, reisdual load, and other relevant energy variables. Standardised indices have a straightforward probabilistic interpretation, making them ideal for risk management and decision making, and are commonly used operationally to monitor hydrological droughts. Standardised energy indices could similarly be employed to define energy droughts, helping to monitor (and avoid) shortages in renewable energy systems.
+This paper introduces standardised energy indices that can be used to monitor energy demand, production, residual load, and other relevant energy variables. Standardised indices have a straightforward probabilistic interpretation, making them ideal for risk management and decision making, and are commonly used operationally to monitor hydrological droughts. Standardised energy indices could similarly be employed to define energy droughts, helping to monitor (and avoid) shortages in renewable energy systems.
 
 ## Code
 
