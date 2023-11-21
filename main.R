@@ -3,8 +3,6 @@
 ################################################################################
 
 source("./config/ConfigureEnv.R")
-#devtools::install_github("noeliaof/SEI")
-library(SEI)
 
 ################################################################################
 ################################## Set up ######################################
@@ -128,7 +126,7 @@ threshvals <- qnorm(c(0.9, 0.95, 0.975)) # 1.28, 1.64, 1.96
 if (evar == "PWS") threshvals <- -threshvals
 
 # energy drought characteristics
-drought_df <- lapply(countries, function(z) get_drought(sei_1d[[z]][, evar], threshvals, higher = (evar != "PWS")))
+drought_df <- lapply(countries, function(z) get_drought(sei_1d[[z]][, evar], threshvals, exceed = (evar != "PWS")))
 names(drought_df) <- countries
 
 summer <- month(index(sei_1d[[1]])) %in% 4:9
@@ -171,7 +169,7 @@ threshvals <- qnorm(c(0.9, 0.95, 0.975))
 sei_1d_mix <- change_energy_mix(enerH_upIC, evars, countries[1:10], threshvals, ws_ratio_vec)
 
 # visualise indices for different configurations
-cnt <- "Portugal"
+cnt <- "Germany"
 evar <- "PWS"
 
 dx <- sei_1d_mix[[11]]$ind[[cnt]][, evar]

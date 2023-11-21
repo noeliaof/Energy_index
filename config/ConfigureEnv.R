@@ -2,7 +2,7 @@ start <- Sys.time()
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-libs <- c('devtools', 'xts', 'zoo', 'lubridate', 'ggplot2', 'dplyr')
+libs <- c('devtools', 'xts', 'zoo', 'lubridate', 'ggplot2', 'dplyr', 'SEI')
 
 message('Configuring and checking environment...')
 

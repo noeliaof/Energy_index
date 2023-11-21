@@ -78,7 +78,7 @@ change_energy_mix <- function(data, evars, countries, threshvals, ws_ratio_vec) 
     drought_df_mix_rl <- lapply(countries, function(z) 
       get_drought(sei_1d_mix[[z]][, "res_load_WS"], threshvals))
     drought_df_mix_pws <- lapply(countries, function(z) 
-      get_drought(sei_1d_mix[[z]][, "PWS"], -threshvals, higher = FALSE))
+      get_drought(sei_1d_mix[[z]][, "PWS"], -threshvals, exceed = FALSE))
     
     # supply droughts
     num_ev <- sapply(drought_df_mix_rl, function(z) mean(z$occ)) # drought frequency
@@ -142,7 +142,7 @@ change_storage <- function(X_ref, threshvals, storage_lens) {
     }
 
     sei_1d_ev_store_rl <- get_drought(ener_ind[["res_load_WS"]], threshvals)
-    sei_1d_ev_store_pws <- get_drought(ener_ind[["PWS"]], -threshvals, higher = F)
+    sei_1d_ev_store_pws <- get_drought(ener_ind[["PWS"]], -threshvals, exceed = F)
     
     storage_results[[ss]] <- list(PWS_drought = sei_1d_ev_store_pws, RL_drought = sei_1d_ev_store_rl)
   }
